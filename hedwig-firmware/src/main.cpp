@@ -4,9 +4,9 @@
  * @brief Harry Potter Hedwig Lamp Controller
  * @version 0.1
  * @date 2024-05-20
- * 
+ *
  * @copyright Copyright (c) 2024
- * 
+ *
  */
 
 #ifndef F_CPU
@@ -16,6 +16,7 @@
 #include <util/delay.h> // needed for our delay
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/sleep.h>
 
 int main(void)
 {
@@ -38,9 +39,11 @@ int main(void)
 	PORTA.PIN7CTRL = PORT_PULLUPEN_bm | PORT_ISC_BOTHEDGES_gc;
 
 	sei();
-
+	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+	uint8_t some_condition = 0;
 	while (1)
 	{
+		some_condition++;
 		_delay_ms(1000);
 
 		PORTA.OUTCLR = PIN6_bm;
@@ -50,6 +53,17 @@ int main(void)
 
 		PORTA.OUTSET = PIN6_bm;
 		PORTA.OUTCLR = PIN3_bm;
+
+		cli();
+		if (some_condition > 5)
+		{
+			sleep_enable();
+			sei();
+			sleep_cpu();
+			some_condition = 0;
+			sleep_disable();
+		}
+		sei();
 	}
 }
 
