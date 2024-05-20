@@ -7,6 +7,10 @@
  *
  * @copyright Copyright (c) 2024
  *
+ * Hardware setup:
+ * * Pin 3 : NC-switch to GND (PA7) (open when pressed)
+ * * Pin 7 : TOP LED (PA3)
+ * * Pin 5 : BOTTOM LED (PA2)
  */
 
 #ifndef F_CPU
@@ -18,9 +22,123 @@
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
 
+static void setup();
+static volatile uint32_t counter = 0;
+static volatile bool new_edge = false;
+
+#define SWITCH_PIN_MASK PIN7_bm
+#define TOP_LED_MASK PIN3_bm
+#define BOTTOM_LED_MASK PIN2_bm 
+
+/**
+ * @brief Pin change detection with debouncing
+ * 
+ * @return true pin has changed state and is now stable
+ * @return false pin has not changed state or is still bouncing
+ */
+bool button_state_changed()
+{
+	static enum {
+		WAITING_FOR_CHANGE,
+		PIN_BOUNCING,
+	} state = WAITING_FOR_CHANGE;
+	static uint32_t edge_start = 0;
+	const uint16_t DEBOUNCE_TIME = 3; // 3 * 31.25Hz = 93.75ms
+
+	switch (state)
+	{
+	case WAITING_FOR_CHANGE:
+		if (new_edge)
+		{
+			new_edge = false;
+			state = PIN_BOUNCING;
+			edge_start = counter;
+			return false;
+		}
+		break;
+	case PIN_BOUNCING:
+		if (new_edge)
+		{
+			// A new edge has been detected, restart the debounce timer
+			state = WAITING_FOR_CHANGE;
+			return false;
+		}
+		if (counter - edge_start > DEBOUNCE_TIME)
+		{
+			// The pin has been stable for the debounce time
+			state = WAITING_FOR_CHANGE;
+			return true;
+		}
+		break;
+	default:
+		state = WAITING_FOR_CHANGE;
+		return false;
+	}
+	return false;
+}
+
 int main(void)
 {
+	setup();
+	enum
+	{
+		LED_OFF,
+		BOTTOM_LED_ON,
+		TOP_LED_ON
+	} led_state = LED_OFF;
+	uint32_t last_button_change = 0;
+	uint16_t DOUBLE_PRESS_INTERVAL = 40; // 40 * 31.25Hz = 1.25s
 
+	while (1)
+	{
+		if (button_state_changed())
+		{
+			if ((counter - last_button_change > DOUBLE_PRESS_INTERVAL) || (last_button_change == 0))
+			{
+				last_button_change = counter;
+				// Set LED state according to input
+				if (PORTA.IN & SWITCH_PIN_MASK)
+				{
+					led_state = TOP_LED_ON;
+				}
+				else
+				{
+					led_state = BOTTOM_LED_ON;
+				}
+			}
+			else
+			{
+				// Double press detected, turn off the LED
+				led_state = LED_OFF;
+			}
+		}
+		switch (led_state)
+		{
+		case LED_OFF:
+			PORTA.OUTCLR = BOTTOM_LED_MASK;
+			PORTA.OUTCLR = TOP_LED_MASK;
+			// Enter sleep mode
+			cli();
+			sleep_enable();
+			sei();
+			sleep_cpu();
+			sleep_disable();
+			sei();
+			break;
+		case BOTTOM_LED_ON:
+			PORTA.OUTSET = BOTTOM_LED_MASK;
+			PORTA.OUTCLR = TOP_LED_MASK;
+			break;
+		case TOP_LED_ON:
+			PORTA.OUTCLR = BOTTOM_LED_MASK;
+			PORTA.OUTSET = TOP_LED_MASK;
+			break;
+		}
+	}
+}
+
+void setup()
+{
 	/* Set the Main clock to internal 32kHz oscillator*/
 	_PROTECTED_WRITE(CLKCTRL.MCLKCTRLA, CLKCTRL_CLKSEL_OSCULP32K_gc);
 	/* Set the Main clock prescaler divisor to 2X and disable the Main clock prescaler */
@@ -28,50 +146,38 @@ int main(void)
 	/* ensure 20MHz isn't forced on*/
 	_PROTECTED_WRITE(CLKCTRL.OSC20MCTRLA, CLKCTRL.OSC20MCTRLA & ~CLKCTRL_RUNSTDBY_bm);
 
-	PORTA.DIRSET = PIN6_bm | PIN3_bm;
+	// Configure periodic interrupt
+	RTC.PITCTRLA = RTC_PERIOD_CYC1024_gc; //!<	Periodic Interrupt Timer Period : 1024 cycles : 32kHz/1024 = 31.25Hz
+	RTC.PITINTCTRL = RTC_PI_bm;			  //!<	Enable Periodic Interrupt
+	RTC.PITCTRLA |= RTC_PITEN_bm;		  //!<	Enable Periodic Interrupt Timer
 
+	// Configure GPIO : PORTA
+	PORTA.DIRSET = BOTTOM_LED_MASK | TOP_LED_MASK;
 	/* Set all pins except the LED pin to pullups*/
 	PORTA.PIN0CTRL = PORT_PULLUPEN_bm;
 	PORTA.PIN1CTRL = PORT_PULLUPEN_bm;
-	PORTA.PIN2CTRL = PORT_PULLUPEN_bm;
+	PORTA.PIN6CTRL = PORT_PULLUPEN_bm;
 
 	// Pin 3 is the input pin, connected to the switch
 	PORTA.PIN7CTRL = PORT_PULLUPEN_bm | PORT_ISC_BOTHEDGES_gc;
 
 	sei();
 	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-	uint8_t some_condition = 0;
-	while (1)
-	{
-		some_condition++;
-		_delay_ms(1000);
-
-		PORTA.OUTCLR = PIN6_bm;
-		PORTA.OUTSET = PIN3_bm;
-
-		_delay_ms(1000);
-
-		PORTA.OUTSET = PIN6_bm;
-		PORTA.OUTCLR = PIN3_bm;
-
-		cli();
-		if (some_condition > 5)
-		{
-			sleep_enable();
-			sei();
-			sleep_cpu();
-			some_condition = 0;
-			sleep_disable();
-		}
-		sei();
-	}
 }
 
 ISR(PORTA_PORT_vect)
 {
 	uint8_t flags = VPORTA.INTFLAGS; // read the interrupt flags
-	// writing "1" to the interruptflag bit will clear it.
-	VPORTA_INTFLAGS = flags; // clear interrupt flags
-	PORTA.OUTSET = PIN6_bm;
-	PORTA.OUTSET = PIN3_bm;
+	VPORTA_INTFLAGS = flags;		 // clear interrupt flags
+	// Capture the edge start time
+	if (flags & SWITCH_PIN_MASK)
+	{
+		new_edge = true;
+	}
+}
+
+ISR(RTC_PIT_vect)
+{
+	RTC.PITINTFLAGS = RTC_PI_bm;
+	counter++;
 }

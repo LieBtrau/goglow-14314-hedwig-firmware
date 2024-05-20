@@ -17,3 +17,6 @@ Unfortunately, the unknown microcontroller doesn't respond to UPDI commands.
 * Pin 6 : UPDI and connected to the bottom LED (cathode of the LED to GND)
 * Pin 7 : connected to the top LED (cathode of the LED to GND)
 * Pin 8 : GND
+
+## Problems
+It's annoying that the UPDI/RST pin is connected to the bottom LED, while there are three unused GPIO-pins on the MCU.  We might keep the existing circuit and use 12V UPDI-programming, but it will be much easier to patch the circuit and connect pin 5 to the bottom LED, instead of pin 6.
