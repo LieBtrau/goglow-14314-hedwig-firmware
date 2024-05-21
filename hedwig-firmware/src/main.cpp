@@ -186,7 +186,7 @@ void goto_sleep()
 	sleep_disable();
 	RTC.PITCTRLA |= RTC_PITEN_bm; //!<	Enable Periodic Interrupt Timer
 	sei();
-	//_PROTECTED_WRITE(RSTCTRL.SWRR, RSTCTRL_SWRE_bm); // Reset the device to wake up
+	_PROTECTED_WRITE(RSTCTRL.SWRR, RSTCTRL_SWRE_bm); // Reset the device to wake up
 }
 
 ISR(PORTA_PORT_vect)
