@@ -22,17 +22,26 @@
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
 
+typedef enum led_state_t
+{
+	LED_OFF,
+	BOTTOM_LED_ON,
+	TOP_LED_ON
+} led_state_t;
 static void setup();
+static void goto_sleep();
+static void do_LED_state(led_state_t state);
+
 static volatile uint32_t counter = 0;
 static volatile bool new_edge = false;
 
 #define SWITCH_PIN_MASK PIN7_bm
 #define TOP_LED_MASK PIN3_bm
-#define BOTTOM_LED_MASK PIN2_bm 
+#define BOTTOM_LED_MASK PIN2_bm
 
 /**
  * @brief Pin change detection with debouncing
- * 
+ *
  * @return true pin has changed state and is now stable
  * @return false pin has not changed state or is still bouncing
  */
@@ -80,17 +89,19 @@ bool button_state_changed()
 int main(void)
 {
 	setup();
-	enum
-	{
-		LED_OFF,
-		BOTTOM_LED_ON,
-		TOP_LED_ON
-	} led_state = LED_OFF;
+	led_state_t led_state = LED_OFF;
 	uint32_t last_button_change = 0;
-	uint16_t DOUBLE_PRESS_INTERVAL = 40; // 40 * 31.25Hz = 1.25s
+	uint16_t DOUBLE_PRESS_INTERVAL = 20;
+	uint16_t LIGHT_TIMEOUT = 100;//00; // 5400 * 31.25Hz = 2.5 minutes
 
-	while (1)
+	while (true)
 	{
+		if(counter - last_button_change > LIGHT_TIMEOUT)
+		{
+			last_button_change = counter;
+			led_state = LED_OFF;
+			do_LED_state(led_state);
+		}
 		if (button_state_changed())
 		{
 			if ((counter - last_button_change > DOUBLE_PRESS_INTERVAL) || (last_button_change == 0))
@@ -111,28 +122,7 @@ int main(void)
 				// Double press detected, turn off the LED
 				led_state = LED_OFF;
 			}
-		}
-		switch (led_state)
-		{
-		case LED_OFF:
-			PORTA.OUTCLR = BOTTOM_LED_MASK;
-			PORTA.OUTCLR = TOP_LED_MASK;
-			// Enter sleep mode
-			cli();
-			sleep_enable();
-			sei();
-			sleep_cpu();
-			sleep_disable();
-			sei();
-			break;
-		case BOTTOM_LED_ON:
-			PORTA.OUTSET = BOTTOM_LED_MASK;
-			PORTA.OUTCLR = TOP_LED_MASK;
-			break;
-		case TOP_LED_ON:
-			PORTA.OUTCLR = BOTTOM_LED_MASK;
-			PORTA.OUTSET = TOP_LED_MASK;
-			break;
+			do_LED_state(led_state);
 		}
 	}
 }
@@ -162,7 +152,41 @@ void setup()
 	PORTA.PIN7CTRL = PORT_PULLUPEN_bm | PORT_ISC_BOTHEDGES_gc;
 
 	sei();
+}
+
+void do_LED_state(led_state_t state)
+{
+	switch (state)
+	{
+	case LED_OFF:
+		PORTA.OUTCLR = BOTTOM_LED_MASK;
+		PORTA.OUTCLR = TOP_LED_MASK;
+		goto_sleep();
+		break;
+	case BOTTOM_LED_ON:
+		PORTA.OUTSET = BOTTOM_LED_MASK;
+		PORTA.OUTCLR = TOP_LED_MASK;
+		break;
+	case TOP_LED_ON:
+		PORTA.OUTCLR = BOTTOM_LED_MASK;
+		PORTA.OUTSET = TOP_LED_MASK;
+		break;
+	}
+}
+
+void goto_sleep()
+{
+	// Enter sleep mode
 	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+	cli();
+	RTC.PITCTRLA &= ~RTC_PITEN_bm; // Disable the PIT because it keeps running in power down mode and consumes 6µA of current
+	sleep_enable();
+	sei();
+	sleep_cpu();
+	sleep_disable();
+	RTC.PITCTRLA |= RTC_PITEN_bm; //!<	Enable Periodic Interrupt Timer
+	sei();
+	//_PROTECTED_WRITE(RSTCTRL.SWRR, RSTCTRL_SWRE_bm); // Reset the device to wake up
 }
 
 ISR(PORTA_PORT_vect)
