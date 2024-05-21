@@ -92,7 +92,7 @@ int main(void)
 	led_state_t led_state = LED_OFF;
 	uint32_t last_button_change = 0;
 	uint16_t DOUBLE_PRESS_INTERVAL = 20;
-	uint16_t LIGHT_TIMEOUT = 100;//00; // 5400 * 31.25Hz = 2.5 minutes
+	uint16_t LIGHT_TIMEOUT = 5400; // 5400 * 31.25Hz = 2.5 minutes
 
 	while (true)
 	{
@@ -141,6 +141,15 @@ void setup()
 	RTC.PITINTCTRL = RTC_PI_bm;			  //!<	Enable Periodic Interrupt
 	RTC.PITCTRLA |= RTC_PITEN_bm;		  //!<	Enable Periodic Interrupt Timer
 
+	// PWM configuration
+	TCA0.SINGLE.CTRLB = TCA_SINGLE_ALUPD_bm            		//!< Auto Lock Update: disabled
+	                    | TCA_SINGLE_WGMODE_SINGLESLOPE_gc;
+	TCA0.SINGLE.PER = 0x200; 								//!< Top Value: 0x1000
+	TCA0.SINGLE.CMP0 = 0xC0;								//!< Period for PA3 (TOP LED)	
+	TCA0.SINGLE.CMP2 = 0xC0;								//!< Period for PA2 (BOTTOM LED)
+	TCA0.SINGLE.CTRLA = TCA_SINGLE_CLKSEL_DIV1_gc 			//!< System Clock
+	                    | 1 << TCA_SINGLE_ENABLE_bp; 		//!< Module Enable: enabled
+
 	// Configure GPIO : PORTA
 	PORTA.DIRSET = BOTTOM_LED_MASK | TOP_LED_MASK;
 	/* Set all pins except the LED pin to pullups*/
@@ -149,7 +158,7 @@ void setup()
 	PORTA.PIN6CTRL = PORT_PULLUPEN_bm;
 
 	// Pin 3 is the input pin, connected to the switch
-	PORTA.PIN7CTRL = PORT_PULLUPEN_bm | PORT_ISC_BOTHEDGES_gc;
+	PORTA.PIN7CTRL = PORT_ISC_BOTHEDGES_gc;
 
 	sei();
 }
@@ -159,17 +168,17 @@ void do_LED_state(led_state_t state)
 	switch (state)
 	{
 	case LED_OFF:
-		PORTA.OUTCLR = BOTTOM_LED_MASK;
-		PORTA.OUTCLR = TOP_LED_MASK;
+		TCA0.SINGLE.CTRLB &= ~TCA_SINGLE_CMP2EN_bm;
+		TCA0.SINGLE.CTRLB &= ~TCA_SINGLE_CMP0EN_bm;
 		goto_sleep();
 		break;
 	case BOTTOM_LED_ON:
-		PORTA.OUTSET = BOTTOM_LED_MASK;
-		PORTA.OUTCLR = TOP_LED_MASK;
+		TCA0.SINGLE.CTRLB |= TCA_SINGLE_CMP2EN_bm;
+		TCA0.SINGLE.CTRLB &= ~TCA_SINGLE_CMP0EN_bm;
 		break;
 	case TOP_LED_ON:
-		PORTA.OUTCLR = BOTTOM_LED_MASK;
-		PORTA.OUTSET = TOP_LED_MASK;
+		TCA0.SINGLE.CTRLB &= ~TCA_SINGLE_CMP2EN_bm;
+		TCA0.SINGLE.CTRLB |= TCA_SINGLE_CMP0EN_bm;
 		break;
 	}
 }
